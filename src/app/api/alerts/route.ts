@@ -7,6 +7,11 @@ export async function POST(request: Request) {
   try {
     const { childName, actionType, entry, recipients } = await request.json();
 
+// Lowercase all recipient emails to satisfy Resend's sandbox validator
+const cleanRecipients = (recipients || []).map((email: string) =>
+  email.trim().toLowerCase()
+);
+
     if (!recipients || !recipients.length) {
       return NextResponse.json({ error: 'No recipients provided' }, { status: 400 });
     }
@@ -17,9 +22,9 @@ export async function POST(request: Request) {
     const subject = `${icon} [CalmTrack] ${actionType}: ${isWin ? 'Milestone' : (entry.intensity || 'Behavior')} by ${entry.loggedBy || 'Parent'}`;
 
     const { data, error } = await resend.emails.send({
-      from: 'CalmTrack <onboarding@resend.dev>', // Switch to alerts@calmtrack.app once domain DNS is added
-      to: recipients,
-      subject: subject,
+  from: 'CalmTrack <onboarding@resend.dev>', // Switch to alerts@calmtrack.app once domain DNS is added
+  to: cleanRecipients,
+  subject: subject,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
           <div style="background-color: ${isDelete ? '#475569' : (isWin ? '#0d9488' : '#e11d48')}; padding: 18px 22px; color: #fff;">

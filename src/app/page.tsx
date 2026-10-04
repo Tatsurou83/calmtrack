@@ -27,14 +27,16 @@ import {
   Upload,
   Camera,
   Music,
-  ImageIcon
+  ImageIcon,
+  Plus,
+  Pencil
 } from "lucide-react";
 import { Chart as ChartJS, registerables } from "chart.js";
 import { createClient } from "@/utils/supabase/client";
 
 ChartJS.register(...registerables);
 
-const TAXONOMY = {
+const DEFAULT_TAXONOMY = {
   triggers: [
     "Noise / Sensory Overload",
     "Unexpected Transition",
@@ -117,6 +119,31 @@ export default function CalmTrackApp() {
     "Pamela.Nobbs@yahoo.com",
   ]);
 
+  // Dynamic Taxonomy State (Built-in + Custom)
+  const [customTaxonomy, setCustomTaxonomy] = useState<{
+    triggers: string[];
+    behaviors: string[];
+    interventions: string[];
+  }>({
+    triggers: [],
+    behaviors: [],
+    interventions: [],
+  });
+
+  // Modal / Prompt State for Custom Chips
+  const [customModalState, setCustomModalState] = useState<{
+    isOpen: boolean;
+    category: "triggers" | "behaviors" | "interventions";
+    isEdit: boolean;
+    oldValue?: string;
+    inputValue: string;
+  }>({
+    isOpen: false,
+    category: "triggers",
+    isEdit: false,
+    inputValue: "",
+  });
+
   // Form State
   const [logType, setLogType] = useState<"incident" | "win">("incident");
   const [timestamp, setTimestamp] = useState("");
@@ -169,7 +196,26 @@ export default function CalmTrackApp() {
   useEffect(() => {
     resetTime();
     loadEntries();
+
+    // Load custom taxonomy from localStorage
+    const savedCustom = localStorage.getItem("calmtrack_custom_taxonomy");
+    if (savedCustom) {
+      try {
+        setCustomTaxonomy(JSON.parse(savedCustom));
+      } catch (e) {
+        console.error(e);
+      }
+    }
   }, []);
+
+  const saveCustomTaxonomy = (updated: {
+    triggers: string[];
+    behaviors: string[];
+    interventions: string[];
+  }) => {
+    setCustomTaxonomy(updated);
+    localStorage.setItem("calmtrack_custom_taxonomy", JSON.stringify(updated));
+  };
 
   const loadEntries = async () => {
     setLoading(true);
@@ -287,7 +333,6 @@ export default function CalmTrackApp() {
     }
   };
 
-  // Upload Pre-recorded Audio
   const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || !files.length) return;
@@ -306,7 +351,6 @@ export default function CalmTrackApp() {
     e.target.value = "";
   };
 
-  // Camera / File Upload (Image Compression)
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || !files.length) return;
@@ -365,6 +409,86 @@ export default function CalmTrackApp() {
     setList((prev) =>
       prev.includes(item) ? prev.filter((i) => i !== item) : [...prev, item]
     );
+  };
+
+  // Custom Chip Actions (Add, Edit, Delete)
+  const openAddCustom = (category: "triggers" | "behaviors" | "interventions") => {
+    setCustomModalState({
+      isOpen: true,
+      category,
+      isEdit: false,
+      inputValue: "",
+    });
+  };
+
+  const openEditCustom = (
+    category: "triggers" | "behaviors" | "interventions",
+    val: string,
+    e: React.MouseEvent
+  ) => {
+    e.stopPropagation();
+    setCustomModalState({
+      isOpen: true,
+      category,
+      isEdit: true,
+      oldValue: val,
+      inputValue: val,
+    });
+  };
+
+  const deleteCustomChip = (
+    category: "triggers" | "behaviors" | "interventions",
+    val: string,
+    e: React.MouseEvent
+  ) => {
+    e.stopPropagation();
+    if (!confirm(`Are you sure you want to remove "${val}"?`)) return;
+
+    const updatedList = customTaxonomy[category].filter((item) => item !== val);
+    saveCustomTaxonomy({ ...customTaxonomy, [category]: updatedList });
+
+    // Also unselect it if selected
+    if (category === "triggers") setSelectedTriggers((prev) => prev.filter((i) => i !== val));
+    if (category === "behaviors") setSelectedBehaviors((prev) => prev.filter((i) => i !== val));
+    if (category === "interventions") setSelectedInterventions((prev) => prev.filter((i) => i !== val));
+  };
+
+  const saveCustomModal = (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = customModalState.inputValue.trim();
+    if (!val) return;
+
+    const cat = customModalState.category;
+    const currentList = customTaxonomy[cat];
+
+    if (customModalState.isEdit && customModalState.oldValue) {
+      const oldVal = customModalState.oldValue;
+      const updatedList = currentList.map((item) => (item === oldVal ? val : item));
+      saveCustomTaxonomy({ ...customTaxonomy, [cat]: updatedList });
+
+      // Update selected tags if selected
+      const updateSelection = (setter: React.Dispatch<React.SetStateAction<string[]>>) => {
+        setter((prev) => prev.map((item) => (item === oldVal ? val : item)));
+      };
+      if (cat === "triggers") updateSelection(setSelectedTriggers);
+      if (cat === "behaviors") updateSelection(setSelectedBehaviors);
+      if (cat === "interventions") updateSelection(setSelectedInterventions);
+    } else {
+      // Add new
+      if (DEFAULT_TAXONOMY[cat].includes(val) || currentList.includes(val)) {
+        alert("This option already exists.");
+        return;
+      }
+      const updatedList = [...currentList, val];
+      saveCustomTaxonomy({ ...customTaxonomy, [cat]: updatedList });
+
+      // Automatically select newly added option
+      if (cat === "triggers") setSelectedTriggers((prev) => [...prev, val]);
+      if (cat === "behaviors") setSelectedBehaviors((prev) => [...prev, val]);
+      if (cat === "interventions") setSelectedInterventions((prev) => [...prev, val]);
+    }
+
+    setCustomModalState({ isOpen: false, category: "triggers", isEdit: false, inputValue: "" });
   };
 
   const parseDurationToMins = (dur: string) => {
@@ -489,7 +613,6 @@ export default function CalmTrackApp() {
 
     Object.values(chartInstances.current).forEach((c) => c?.destroy());
 
-    // 1. Daily Trend
     if (chartDailyRef.current) {
       const dailyMap: { [key: string]: { challenges: number; wins: number } } = {};
       filteredEntries.forEach((e) => {
@@ -525,7 +648,6 @@ export default function CalmTrackApp() {
       });
     }
 
-    // 2. Time of Day Pattern
     if (chartTimeRef.current) {
       const hoursMap = {
         "Morning (6-10a)": 0,
@@ -562,7 +684,6 @@ export default function CalmTrackApp() {
       });
     }
 
-    // 3. Top Antecedents & Triggers
     if (chartTrigRef.current) {
       const topTrigs = Object.entries(trigCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
       chartInstances.current.triggers = new ChartJS(chartTrigRef.current, {
@@ -584,7 +705,6 @@ export default function CalmTrackApp() {
       });
     }
 
-    // 4. Effective Interventions
     if (chartIntervRef.current) {
       const topIntervs = Object.entries(intervCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
       chartInstances.current.interventions = new ChartJS(chartIntervRef.current, {
@@ -831,7 +951,7 @@ export default function CalmTrackApp() {
                 </div>
               </div>
 
-              {/* INTENSITY LEVEL SELECTION */}
+              {/* INTENSITY LEVEL */}
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                   Intensity Level
@@ -891,16 +1011,27 @@ export default function CalmTrackApp() {
                 </div>
               </div>
 
-              {/* ABC TAGS */}
+              {/* ANTECEDENTS / TRIGGERS */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                  <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 inline-flex items-center justify-center text-xs font-bold mr-1.5">
-                    A
-                  </span>
-                  Antecedents / Triggers
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center">
+                    <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 inline-flex items-center justify-center text-xs font-bold mr-1.5">
+                      A
+                    </span>
+                    Antecedents / Triggers
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => openAddCustom("triggers")}
+                    className="inline-flex items-center space-x-1 text-xs text-amber-700 hover:text-amber-800 font-semibold bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded-full border border-amber-200 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Custom</span>
+                  </button>
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {TAXONOMY.triggers.map((t) => (
+                  {/* Default Triggers */}
+                  {DEFAULT_TAXONOMY.triggers.map((t) => (
                     <button
                       key={t}
                       type="button"
@@ -914,18 +1045,59 @@ export default function CalmTrackApp() {
                       {t}
                     </button>
                   ))}
+                  {/* Custom Triggers */}
+                  {customTaxonomy.triggers.map((ct) => (
+                    <div
+                      key={ct}
+                      onClick={() => toggleChip(selectedTriggers, setSelectedTriggers, ct)}
+                      className={`group inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer transition ${
+                        selectedTriggers.includes(ct)
+                          ? "bg-amber-100 border-amber-400 text-amber-900"
+                          : "bg-white border-dashed border-amber-300 text-amber-800 hover:bg-amber-50"
+                      }`}
+                    >
+                      <span>{ct}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => openEditCustom("triggers", ct, e)}
+                        title="Edit tag"
+                        className="text-amber-600 hover:text-amber-900 p-0.5 rounded hover:bg-amber-200/50"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => deleteCustomChip("triggers", ct, e)}
+                        title="Delete tag"
+                        className="text-rose-500 hover:text-rose-700 p-0.5 rounded hover:bg-rose-100"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
 
+              {/* BEHAVIORS OBSERVED */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                  <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 inline-flex items-center justify-center text-xs font-bold mr-1.5">
-                    B
-                  </span>
-                  Behaviors Observed
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center">
+                    <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 inline-flex items-center justify-center text-xs font-bold mr-1.5">
+                      B
+                    </span>
+                    Behaviors Observed
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => openAddCustom("behaviors")}
+                    className="inline-flex items-center space-x-1 text-xs text-rose-700 hover:text-rose-800 font-semibold bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded-full border border-rose-200 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Custom</span>
+                  </button>
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {TAXONOMY.behaviors.map((b) => (
+                  {DEFAULT_TAXONOMY.behaviors.map((b) => (
                     <button
                       key={b}
                       type="button"
@@ -939,18 +1111,58 @@ export default function CalmTrackApp() {
                       {b}
                     </button>
                   ))}
+                  {customTaxonomy.behaviors.map((cb) => (
+                    <div
+                      key={cb}
+                      onClick={() => toggleChip(selectedBehaviors, setSelectedBehaviors, cb)}
+                      className={`group inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer transition ${
+                        selectedBehaviors.includes(cb)
+                          ? "bg-rose-100 border-rose-400 text-rose-900"
+                          : "bg-white border-dashed border-rose-300 text-rose-800 hover:bg-rose-50"
+                      }`}
+                    >
+                      <span>{cb}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => openEditCustom("behaviors", cb, e)}
+                        title="Edit tag"
+                        className="text-rose-600 hover:text-rose-900 p-0.5 rounded hover:bg-rose-200/50"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => deleteCustomChip("behaviors", cb, e)}
+                        title="Delete tag"
+                        className="text-rose-500 hover:text-rose-700 p-0.5 rounded hover:bg-rose-100"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
 
+              {/* CONSEQUENCES / WHAT HELPED */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                  <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 inline-flex items-center justify-center text-xs font-bold mr-1.5">
-                    C
-                  </span>
-                  Consequences / What Helped
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center">
+                    <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 inline-flex items-center justify-center text-xs font-bold mr-1.5">
+                      C
+                    </span>
+                    Consequences / What Helped
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => openAddCustom("interventions")}
+                    className="inline-flex items-center space-x-1 text-xs text-teal-700 hover:text-teal-800 font-semibold bg-teal-50 hover:bg-teal-100 px-2.5 py-1 rounded-full border border-teal-200 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Custom</span>
+                  </button>
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {TAXONOMY.interventions.map((i) => (
+                  {DEFAULT_TAXONOMY.interventions.map((i) => (
                     <button
                       key={i}
                       type="button"
@@ -965,6 +1177,35 @@ export default function CalmTrackApp() {
                     >
                       {i}
                     </button>
+                  ))}
+                  {customTaxonomy.interventions.map((ci) => (
+                    <div
+                      key={ci}
+                      onClick={() => toggleChip(selectedInterventions, setSelectedInterventions, ci)}
+                      className={`group inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer transition ${
+                        selectedInterventions.includes(ci)
+                          ? "bg-teal-100 border-teal-400 text-teal-900"
+                          : "bg-white border-dashed border-teal-300 text-teal-800 hover:bg-teal-50"
+                      }`}
+                    >
+                      <span>{ci}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => openEditCustom("interventions", ci, e)}
+                        title="Edit tag"
+                        className="text-teal-600 hover:text-teal-900 p-0.5 rounded hover:bg-teal-200/50"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => deleteCustomChip("interventions", ci, e)}
+                        title="Delete tag"
+                        className="text-rose-500 hover:text-rose-700 p-0.5 rounded hover:bg-rose-100"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -994,7 +1235,6 @@ export default function CalmTrackApp() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Option 1: Live Audio Recording */}
                   <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-2 flex flex-col justify-between">
                     <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
                       <span className="flex items-center">
@@ -1027,7 +1267,6 @@ export default function CalmTrackApp() {
                     )}
                   </div>
 
-                  {/* Option 2: Upload Audio File */}
                   <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-2 flex flex-col justify-between">
                     <div className="text-xs font-semibold text-slate-700 flex items-center">
                       <Music className="w-3.5 h-3.5 text-purple-600 mr-1" />
@@ -1046,7 +1285,6 @@ export default function CalmTrackApp() {
                     </label>
                   </div>
 
-                  {/* Option 3: Camera / File Upload */}
                   <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-2 flex flex-col justify-between">
                     <div className="text-xs font-semibold text-slate-700 flex items-center">
                       <Camera className="w-3.5 h-3.5 text-blue-600 mr-1" />
@@ -1067,7 +1305,6 @@ export default function CalmTrackApp() {
                   </div>
                 </div>
 
-                {/* Staged Attachments Preview List */}
                 {stagedMedia.length > 0 && (
                   <div className="pt-2 border-t border-slate-200 space-y-2">
                     <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1202,7 +1439,7 @@ export default function CalmTrackApp() {
               </div>
             </div>
 
-            {/* ALL 4 CHARTS */}
+            {/* CHARTS */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white p-4 rounded-xl border border-slate-200">
                 <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center">
@@ -1414,6 +1651,73 @@ export default function CalmTrackApp() {
           </div>
         )}
       </main>
+
+      {/* MODAL: ADD / EDIT CUSTOM CHIP */}
+      {customModalState.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h3 className="font-bold text-slate-900 text-sm">
+                {customModalState.isEdit ? "Edit Custom Option" : "Add Custom Option"}
+              </h3>
+              <button
+                type="button"
+                onClick={() =>
+                  setCustomModalState({
+                    isOpen: false,
+                    category: "triggers",
+                    isEdit: false,
+                    inputValue: "",
+                  })
+                }
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={saveCustomModal} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                  Option Name
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  value={customModalState.inputValue}
+                  onChange={(e) =>
+                    setCustomModalState({ ...customModalState, inputValue: e.target.value })
+                  }
+                  placeholder="e.g. Scent / Perfume sensitivity"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                />
+              </div>
+              <div className="flex justify-end space-x-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCustomModalState({
+                      isOpen: false,
+                      category: "triggers",
+                      isEdit: false,
+                      inputValue: "",
+                    })
+                  }
+                  className="px-3 py-1.5 border border-slate-200 text-slate-600 rounded-lg text-xs font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-semibold"
+                >
+                  {customModalState.isEdit ? "Save Changes" : "Add Option"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* SETTINGS MODAL */}
       {settingsOpen && (
